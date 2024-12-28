@@ -13,12 +13,17 @@ class FaceRecognizer:
         self.known_face_features = []
         self.face_names = {}
         self.face_size = (64, 64)
-        self.model = self.train_model()  # Melatih model saat inisialisasi
+
+        # Memuat model jika ada
+        if os.path.exists('face_recognition_model.pkl'):
+            self.model = joblib.load('face_recognition_model.pkl')
+        else:
+            self.model = self.train_model()  # Melatih model jika tidak ada
+
         self.load_dataset()
 
     def load_dataset(self):
         """Load and compute HOG features for all faces in dataset"""
-        # Daftar subfolder yang akan diproses
         subfolders = ['real_faces', 'images']
         total_loaded = 0
 
@@ -31,24 +36,20 @@ class FaceRecognizer:
                 image_path = os.path.join(folder_path, image_name)
                 image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
-                # Skip invalid images
                 if image is None:
                     print(f"Warning: Could not load {image_name} from {subfolder}")
                     continue
 
-                # Hitung fitur HOG
                 features = self.compute_hog_features(image)
                 print(f"Fitur untuk {image_name}: {features}")  # Debugging
 
                 self.known_faces.append(image)
                 self.known_face_features.append(features)
 
-                # Menyimpan ID wajah berdasarkan subfolder
                 if subfolder == 'real_faces':
                     face_id = image_name.split('.')[1]  # Ambil ID dari nama file
                     self.face_names[len(self.known_faces) - 1] = face_id
                 else:
-                    # Jika dari subfolder images, kita bisa memberi ID default atau "Unknown"
                     self.face_names[len(self.known_faces) - 1] = "Unknown"
 
                 total_loaded += 1
@@ -95,12 +96,10 @@ class FaceRecognizer:
         model = svm.SVC(kernel='linear')
         model.fit(X_train, y_train)
 
-        # Uji model
         predictions = model.predict(X_test)
         accuracy = accuracy_score(y_test, predictions)
         print(f'Akurasi model: {accuracy:.2f}')
 
-        # Simpan model
         joblib.dump(model, 'face_recognition_model.pkl')
 
         return model
@@ -109,7 +108,6 @@ class FaceRecognizer:
         features = []
         labels = []
 
-      
         for label in ['real_faces', 'images']:
             folder_path = os.path.join(dataset_path, label)
             images = [f for f in os.listdir(folder_path) if f.endswith('.jpg')]
@@ -121,7 +119,6 @@ class FaceRecognizer:
                 if image is None:
                     continue
 
-                # Hitung fitur HOG
                 features.append(self.compute_hog_features(image))
                 labels.append(1 if label == 'real_faces' else 0)  # 1 untuk wajah asli, 0 untuk gambar
 
@@ -146,7 +143,7 @@ class FaceRecognizer:
             face = cv2.equalizeHist(face)
 
             face_features = self.compute_hog_features(face)
-            
+
             # Cek apakah wajah asli
             if self.is_real_face(face_features):
                 best_match = -1
@@ -164,7 +161,7 @@ class FaceRecognizer:
                 else:
                     detected_faces.append([x, y, w, h, best_similarity, "Unknown"])
             else:
-                detected_faces.append([x, y, w, h, 0, "Image"])  # Menandai sebagai gambar
+                detected_faces.append([x, y, w, h, 0, "Image"])  
 
         return detected_faces
 
