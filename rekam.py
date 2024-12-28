@@ -15,8 +15,8 @@ a = 0
 
 # Buat folder dataset jika belum ada
 import os
-if not os.path.exists('dataset'):
-    os.makedirs('dataset')
+if not os.path.exists('dataset/real_faces'):
+    os.makedirs('dataset/real_faces')
 
 while True:
     a += 1

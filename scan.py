@@ -1,150 +1,203 @@
 import cv2
 import numpy as np
-from PIL import Image
 import os
+from sklearn import svm
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import joblib
 
-# Fungsi untuk menghitung gradien
-def compute_gradients(image):
-    gray_image = np.array(image.convert('L'))
-    
-    gx = np.zeros(gray_image.shape)
-    gy = np.zeros(gray_image.shape)
-    
-    sobel_x = np.array([[-1, 0, 1],
-                        [-2, 0, 2],
-                        [-1, 0, 1]])
-    
-    sobel_y = np.array([[1, 2, 1],
-                        [0, 0, 0],
-                        [-1, -2, -1]])
-    
-    for i in range(1, gray_image.shape[0] - 1):
-        for j in range(1, gray_image.shape[1] - 1):
-            gx[i, j] = np.sum(sobel_x * gray_image[i-1:i+2, j-1:j+2])
-            gy[i, j] = np.sum(sobel_y * gray_image[i-1:i+2, j-1:j+2])
-    
-    return gx, gy
+class FaceRecognizer:
+    def __init__(self, dataset_path):
+        self.dataset_path = dataset_path
+        self.known_faces = []
+        self.known_face_features = []
+        self.face_names = {}
+        self.face_size = (64, 64)
+        self.model = self.train_model()  # Melatih model saat inisialisasi
+        self.load_dataset()
 
-# Fungsi untuk menghitung fitur HOG
-def compute_hog_features(gx, gy, cell_size=8):
-    height, width = gx.shape
-    hog_features = []
-    
-    for i in range(0, height // cell_size):
-        for j in range(0, width // cell_size):
-            cell_gx = gx[i*cell_size:(i+1)*cell_size, j*cell_size:(j+1)*cell_size]
-            cell_gy = gy[i*cell_size:(i+1)*cell_size, j*cell_size:(j+1)*cell_size]
+    def load_dataset(self):
+        """Load and compute HOG features for all faces in dataset"""
+        # Daftar subfolder yang akan diproses
+        subfolders = ['real_faces', 'images']
+        total_loaded = 0
+
+        for subfolder in subfolders:
+            folder_path = os.path.join(self.dataset_path, subfolder)
+            images = [f for f in os.listdir(folder_path) if f.endswith('.jpg') or f.endswith('.png')]
+            print(f"Loading {len(images)} images from {subfolder}...")
+
+            for image_name in images:
+                image_path = os.path.join(folder_path, image_name)
+                image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+                # Skip invalid images
+                if image is None:
+                    print(f"Warning: Could not load {image_name} from {subfolder}")
+                    continue
+
+                # Hitung fitur HOG
+                features = self.compute_hog_features(image)
+                print(f"Fitur untuk {image_name}: {features}")  # Debugging
+
+                self.known_faces.append(image)
+                self.known_face_features.append(features)
+
+                # Menyimpan ID wajah berdasarkan subfolder
+                if subfolder == 'real_faces':
+                    face_id = image_name.split('.')[1]  # Ambil ID dari nama file
+                    self.face_names[len(self.known_faces) - 1] = face_id
+                else:
+                    # Jika dari subfolder images, kita bisa memberi ID default atau "Unknown"
+                    self.face_names[len(self.known_faces) - 1] = "Unknown"
+
+                total_loaded += 1
+
+        print(f"Loaded {total_loaded} faces successfully")
+
+    def compute_hog_features(self, image, cell_size=8):
+        """Compute HOG features with simplified parameters"""
+        image = cv2.resize(image, self.face_size)
+        gx = cv2.Sobel(image, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(image, cv2.CV_32F, 0, 1, ksize=3)
+        magnitude = np.sqrt(gx**2 + gy**2)
+        orientation = np.arctan2(gy, gx) * (180 / np.pi) % 180
+
+        height, width = image.shape
+        num_cells_y = height // cell_size
+        num_cells_x = width // cell_size
+        num_bins = 9
+
+        hist = np.zeros((num_cells_y, num_cells_x, num_bins))
+
+        for y in range(num_cells_y):
+            for x in range(num_cells_x):
+                cell_mag = magnitude[y*cell_size:(y+1)*cell_size, 
+                                     x*cell_size:(x+1)*cell_size]
+                cell_ori = orientation[y*cell_size:(y+1)*cell_size, 
+                                       x*cell_size:(x+1)*cell_size]
+
+                bin_indices = (cell_ori // 20).astype(int)
+                for bin_idx in range(num_bins):
+                    mask = bin_indices == bin_idx
+                    hist[y, x, bin_idx] = np.sum(cell_mag[mask])
+
+        features = hist.flatten()
+        features = features / (np.linalg.norm(features) + 1e-6)
+
+        return features
+
+    def train_model(self):
+        """Melatih model untuk membedakan wajah asli dan gambar"""
+        features, labels = self.create_feature_dataset(self.dataset_path)
+        X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
+
+        model = svm.SVC(kernel='linear')
+        model.fit(X_train, y_train)
+
+        # Uji model
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        print(f'Akurasi model: {accuracy:.2f}')
+
+        # Simpan model
+        joblib.dump(model, 'face_recognition_model.pkl')
+
+        return model
+
+    def create_feature_dataset(self, dataset_path):
+        features = []
+        labels = []
+
+      
+        for label in ['real_faces', 'images']:
+            folder_path = os.path.join(dataset_path, label)
+            images = [f for f in os.listdir(folder_path) if f.endswith('.jpg')]
+            print(f"Processing {len(images)} images in {label} folder...")
+
+            for image_name in images:
+                image_path = os.path.join(folder_path, image_name)
+                image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+                if image is None:
+                    continue
+
+                # Hitung fitur HOG
+                features.append(self.compute_hog_features(image))
+                labels.append(1 if label == 'real_faces' else 0)  # 1 untuk wajah asli, 0 untuk gambar
+
+        return np.array(features), np.array(labels)
+
+    def is_real_face(self, face_features):
+        """Prediksi apakah wajah yang terdeteksi adalah wajah asli atau gambar"""
+        prediction = self.model.predict([face_features])
+        return prediction[0] == 1  # Kembalikan True jika wajah asli
+
+    def detect_faces(self, frame, min_similarity=0.5):
+        """Detect faces using sliding window"""
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+        face_candidates = face_cascade.detectMultiScale(gray_frame, 1.3, 5)
+
+        detected_faces = []
+
+        for (x, y, w, h) in face_candidates:
+            face = gray_frame[y:y+h, x:x+w]
+            face = cv2.resize(face, self.face_size)
+            face = cv2.equalizeHist(face)
+
+            face_features = self.compute_hog_features(face)
             
-            magnitude = np.sqrt(cell_gx**2 + cell_gy**2)
-            angle = np.arctan2(cell_gy, cell_gx) * (180.0 / np.pi) % 180
-            
-            hist = np.zeros(9)
-            for k in range(cell_size):
-                for l in range(cell_size):
-                    bin_index = int(angle[k, l] // 20)
-                    hist[bin_index] += magnitude[k, l]
-            
-            hog_features.append(hist)
-    
-    return np.array(hog_features).flatten()
+            # Cek apakah wajah asli
+            if self.is_real_face(face_features):
+                best_match = -1
+                best_similarity = -1
 
-# Fungsi untuk mendeteksi wajah
-def detect_faces(image, window_size=(64, 128)):
-    gx, gy = compute_gradients(image)
-    
-    detected_faces = []
-    for i in range(0, image.height - window_size[1], 10):
-        for j in range(0, image.width - window_size[0], 10):
-            window = image.crop((j, i, j + window_size[0], i + window_size[1]))
-            window_gx, window_gy = compute_gradients(window)
-            window_hog = compute_hog_features(window_gx, window_gy)
-            
-            if np.sum(window_hog) > 100:
-                detected_faces.append((j, i, window_size[0], window_size[1], window_hog))
-    
-    return detected_faces
+                for idx, known_features in enumerate(self.known_face_features):
+                    similarity = np.dot(face_features, known_features)
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_match = idx
 
-# Fungsi untuk membandingkan fitur HOG
-def compare_faces(face1_features, face2_features, threshold=0.8):
-    similarity = np.dot(face1_features, face2_features) / (np.linalg.norm(face1_features) * np.linalg.norm(face2_features))
-    return similarity > threshold
+                if best_similarity > min_similarity:
+                    face_id = self.face_names[best_match]
+                    detected_faces.append([x, y, w, h, best_similarity, face_id])
+                else:
+                    detected_faces.append([x, y, w, h, best_similarity, "Unknown"])
+            else:
+                detected_faces.append([x, y, w, h, 0, "Image"])  # Menandai sebagai gambar
 
-# Fungsi untuk memproses dataset
-def process_dataset(dataset_path):
-    dataset_features = []
-    images = [f for f in os.listdir(dataset_path) if f.endswith(('.jpg', '.jpeg', '.png'))]
-    
-    for image_name in images:
-        image_path = os.path.join(dataset_path, image_name)
-        image = Image.open(image_path)
-        
-        # Resize image untuk konsistensi
-        image = image.resize((64, 128))
-        
-        gx, gy = compute_gradients(image)
-        features = compute_hog_features(gx, gy)
-        
-        dataset_features.append({
-            'name': image_name,
-            'features': features
-        })
-    
-    return dataset_features
+        return detected_faces
 
 def main():
-    # Load dan proses dataset
-    dataset_path = 'dataset/'  # Sesuaikan dengan path dataset Anda
-    print("Loading dataset...")
-    dataset_features = process_dataset(dataset_path)
-    print(f"Loaded {len(dataset_features)} images from dataset")
-    
-    # Inisialisasi kamera
-    video_capture = cv2.VideoCapture(0)
-    if not video_capture.isOpened():
-        print("Error: Camera could not be opened.")
+    recognizer = FaceRecognizer('dataset/')
+
+    print("Opening camera...")
+    cap = cv2.VideoCapture(0)
+
+    if not cap.isOpened():
+        print("Cannot open camera")
         return
-    
-    cv2.namedWindow("Face Recognition", cv2.WINDOW_NORMAL)
-    
+
     while True:
-        ret, frame = video_capture.read()
+        ret, frame = cap.read()
         if not ret:
-            print("Error: Could not read frame")
             break
-        
-        # Konversi frame ke PIL Image
-        pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        
-        # Deteksi wajah dalam frame
-        detected_faces = detect_faces(pil_image)
-        
-        # Proses setiap wajah yang terdeteksi
-        for (x, y, w, h, face_features) in detected_faces:
-            match_found = False
-            
-            # Bandingkan dengan wajah dalam dataset
-            for dataset_face in dataset_features:
-                if compare_faces(face_features, dataset_face['features']):
-                    # Gambar kotak hijau untuk wajah yang cocok
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                    cv2.putText(frame, dataset_face['name'], (x, y-10),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-                    match_found = True
-                    break
-            
-            if not match_found:
-                # Gambar kotak merah untuk wajah yang tidak cocok
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-                cv2.putText(frame, "Unknown", (x, y-10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-        
-        # Tampilkan frame
+
+        faces = recognizer.detect_faces(frame)
+
+        for (x, y, w, h, similarity, face_id) in faces:
+            color = (0, int(255 * similarity), 0) if face_id != "Image" else (0, 0, 255)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            text = f"ID: {face_id} ({similarity:.2f})"
+            cv2.putText(frame, text, (x, y-10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
         cv2.imshow("Face Recognition", frame)
-        
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-    
-    video_capture.release()
+
+    cap.release()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
