@@ -141,7 +141,8 @@ class FaceRecognizer:
             face = gray_frame[y:y+h, x:x+w]
             face = cv2.resize(face, self.face_size)
             face = cv2.equalizeHist(face)
-
+            
+            
             face_features = self.compute_hog_features(face)
 
             # Cek apakah wajah asli

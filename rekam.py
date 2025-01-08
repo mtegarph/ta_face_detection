@@ -31,12 +31,12 @@ while True:
     wajah = faceDeteksi.detectMultiScale(abu, 1.3, 5)
     
     for (x, y, w, h) in wajah:
-        cv2.imwrite(f'dataset/User.{id}.{a}.jpg', abu[y:y+h, x:x+w])
+        cv2.imwrite(f'dataset/real_faces/User.{id}.{a}.jpg', abu[y:y+h, x:x+w])
         cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
     
     cv2.imshow("Face Recognition Window", frame)
     
-    if a > 29:  # Ambil 30 gambar
+    if a > 150: 
         break
 
 video.release()
